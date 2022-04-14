@@ -6,154 +6,183 @@ import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import threading
 from matplotlib import animation
 from datetime import datetime
 from pylogix import PLC
 
+class PeriodicInterval(threading.Thread):
+    def __init__(self, task_function, period):
+        super().__init__()
+        self.daemon = True
+        self.task_function = task_function
+        self.period = period
+        self.i = 0
+        self.t0 = time.time()
+        self.stopper=0
+        self.start()
+        
+    def sleep(self):
+        self.i += 1
+        delta = self.t0 + self.period * self.i - time.time()
+        if delta > 0:
+            time.sleep(delta)
+    
+    def run(self):
+        while self.stopper==0:
+            self.task_function()
+            self.sleep()
+
+    def stop(self):
+        self.stopper=1
+
+    def restart(self):
+        self.stopper=0
+        self.i = 0
+        self.t0 = time.time()
+
 class data(object):
     def __init__(self):      
-        """Setup
-        """
-        self.pltPV = np.zeros(0)
-        self.pltCV = np.zeros(0)
-        self.pltSP = np.zeros(0)
-        self.RunNow=0
-        self.ErrCount=0
-        self.ReadCount=0
-        self.lastSP=0
-        self.lastCV=0
-        self.lastPV=0
+        self.reset()
 
     def update(self,PV,CV,SP):
-        """Add Data 
-        """
-        self.pltPV=np.append(self.pltPV,PV)
-        self.pltCV=np.append(self.pltCV,CV)
-        self.pltSP=np.append(self.pltSP,SP) 
-    
-    def getlast(self):
-        """returns last value when read fails
-        """
-        if len(self.pltPV)>0:
-            self.lastPV=self.pltPV[-1]
-            self.lastCV=self.pltCV[-1]
-            self.lastSP=self.pltSP[-1] 
-
-        return [self.lastPV,self.lastCV,self.lastSP]
+        self.PV=np.append(self.PV,PV)
+        self.CV=np.append(self.CV,CV)
+        self.SP=np.append(self.SP,SP) 
         
     def reset(self):
-        """Reset
-        """
-        self.pltPV = np.zeros(0)
-        self.pltCV = np.zeros(0)
-        self.pltSP = np.zeros(0)        
-        self.RunNow=0
-        
+        self.PV = np.zeros(0)
+        self.CV = np.zeros(0)
+        self.SP = np.zeros(0)        
+        self.ErrCount=0
+        self.ReadCount=0
+        self.SetupFlag=False
+        self.RunNowFlag=False
+       
+def thread_record():
+    global loop_record
+    loop_record = PeriodicInterval(Record, int(deltat.get())/1000)
+    
 def Record():
-    #Setup communnication object       
-    comm.IPAddress = ip.get()
-    comm.ProcessorSlot = int(slot.get())
+    if GData.SetupFlag==False:
+        #Setup communnication object       
+        comm.IPAddress = ip.get()
+        comm.ProcessorSlot = int(slot.get())
+        comm.SocketTimeout = int(deltat.get())/1000                     
+        spstatus.set("")
+        pvstatus.set("")
+        cvstatus.set("")        
+        GData.ErrCount=0
+        GData.ReadCount=0
+        GData.SetupFlag=True 
+        GData.RunNowFlag=True
+
     current_date_time = datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S.%f')
 
-    #Setup tags to read
-    tag_list = [pvtexttag.get(), cvtexttag.get(), sptexttag.get()]
-    ret = comm.Read(tag_list)
+    try:
+        #Setup tags to read
+        tag_list = [pvtexttag.get(), cvtexttag.get(), sptexttag.get()]
+        ret = comm.Read(tag_list)
   
-    #Update gui data if read is successful, if not update last error
-    if ret[0].Status=='Success':
-        pvtext.set(round(ret[0].Value,2))         
-        pvtexttag.configure(state="disabled")
-    else:
-        pvstatus.set(ret[0].Status)
-
-    #Update gui data if read is successful, if not update last error
-    if ret[1].Status=='Success':
-        cvtext.set(round(ret[1].Value,2))         
-        cvtexttag.configure(state="disabled")
-    else:
-        cvstatus.set(ret[1].Status)
-
-    #Update gui data if read is successful, if not update last error
-    if ret[2].Status=='Success':
-        sptext.set(round(ret[2].Value,2))
-        sptexttag.configure(state="disabled")
-    else:
-        spstatus.set(ret[2].Status)
-
-    #If read fails update error counter, if successful increment read counter
-    if ret[0].Status=='Success' or ret[1].Status=='Success' or ret[2].Status=='Success':
-        GData.ReadCount+=1
-    if ret[0].Status!='Success' and ret[1].Status!='Success' and ret[2].Status!='Success':
-        GData.ErrCount+=1
-    ec='Errors: '+ str(GData.ErrCount)
-    rc='Reads: '+ str(GData.ReadCount)
-    errorcount.set(ec)
-    readcount.set(rc)
-    
-    #Disable inputs if tag read is successful
-    if ret[0].Status=='Success' or ret[1].Status=='Success' or ret[2].Status=='Success':
-        deltat.configure(state="disabled")
-        ip.configure(state="disabled")
-        slot.configure(state="disabled")
-        fname.configure(state="disabled")
-        button_record.configure(bg = "Green")
-        button_livetrend["state"] = "normal"
-
-    #Write new data to csv if read was successful
-    #if not write last value
-    #Open File or create if it doesn't exist
-    with open(fname.get(), 'a') as csv_file:
-        csv_file = csv.writer(csv_file, delimiter=';', lineterminator='\n', quotechar='/', quoting=csv.QUOTE_MINIMAL)
-        #Write headers if its a new file
-        if os.stat(fname.get()).st_size == 0:
-            csv_file.writerow((ret[0].TagName,ret[1].TagName,ret[2].TagName,'TimeStamp'))
-        #Write all values to csv file  
-        if ret[0].Status=='Success' or ret[1].Status=='Success' or ret[2].Status=='Success':  
-            GData.update(ret[0].Value,ret[1].Value,ret[2].Value)
-            row = [x.Value for x in ret]            
+        #Update gui data if read is successful, if not update last error
+        if ret[0].Status=='Success':
+            actualpv=round(ret[0].Value,2)
+            pvtext.set(actualpv)         
+            pvtexttag.configure(state="disabled")
         else:
-            #if read fails log last value
-            GData.update(*GData.getlast())
-            row = GData.getlast()        
-        row.append(current_date_time)
-        csv_file.writerow(row)
+            pvstatus.set(ret[0].Status)
+            if len(GData.PV>0):
+                actualpv=GData.PV[-1]
+            else:
+                actualpv=0
 
-    #Loop       
-    looper=root.after(int(deltat.get()), Record)
-    #Stop when RunNow is false
-    if not GData.RunNow:
-        comm.Close()
-        root.after_cancel(looper)
-        #Enable text box entry
-        sptexttag.configure(state="normal")
-        pvtexttag.configure(state="normal")
-        cvtexttag.configure(state="normal")
-        deltat.configure(state="normal")
-        ip.configure(state="normal")
-        slot.configure(state="normal")
-        fname.configure(state="normal")        
-        button_record.configure(bg = "#f0f0f0")
-        button_livetrend["state"] = "disabled"
-          
+        #Update gui data if read is successful, if not update last error
+        if ret[1].Status=='Success':
+            actualcv=round(ret[1].Value,2)
+            cvtext.set(actualcv)         
+            cvtexttag.configure(state="disabled")
+        else:
+            cvstatus.set(ret[1].Status)
+            if len(GData.CV>0):
+                actualcv=GData.CV[-1]
+            else:
+                actualcv=0
+
+        #Update gui data if read is successful, if not update last error
+        if ret[2].Status=='Success':
+            actualsp=round(ret[2].Value,2)
+            sptext.set(actualsp)
+            sptexttag.configure(state="disabled")
+        else:
+            spstatus.set(ret[2].Status)
+            if len(GData.SP>0):
+                actualsp=GData.SP[-1]
+            else:
+                actualsp=0
+                
+        #Disable inputs if tag read is successful
+        if ret[0].Status=='Success' or ret[1].Status=='Success' or ret[2].Status=='Success':
+            deltat.configure(state="disabled")
+            ip.configure(state="disabled")
+            slot.configure(state="disabled")
+            fname.configure(state="disabled")
+            button_record.configure(bg = "Green")
+            button_livetrend["state"] = "normal"
+
+        #Write new data to csv if read was successful, if not write last value, Open File or create if it doesn't exist
+        with open(fname.get(), 'a') as csv_file:
+            csv_file = csv.writer(csv_file, delimiter=';', lineterminator='\n', quotechar='/', quoting=csv.QUOTE_MINIMAL)
+            #Write headers if its a new file
+            if os.stat(fname.get()).st_size == 0:
+                csv_file.writerow((ret[0].TagName,ret[1].TagName,ret[2].TagName,'TimeStamp'))
+            #Write all values to csv file  
+            row = [actualpv,actualcv,actualsp]
+            GData.update(actualpv,actualcv,actualsp)            
+            row.append(current_date_time)
+            csv_file.writerow(row)
+
+        #If read fails update error counter, if successful increment read counter
+        if ret[0].Status=='Success' or ret[1].Status=='Success' or ret[2].Status=='Success':
+            GData.ReadCount+=1
+        if ret[0].Status!='Success' and ret[1].Status!='Success' and ret[2].Status!='Success':
+            GData.ErrCount+=1
+        ec='Errors: '+ str(GData.ErrCount)
+        rc='Reads: '+ str(GData.ReadCount)
+        errorcount.set(ec)
+        readcount.set(rc)
+
+    except Exception as e:    
+        spstatus.set('Error: ' + str(e))  
+        cvstatus.set('Error: ' + str(e))  
+        pvstatus.set('Error: ' + str(e))     
+         
 def Write():
-    #Setup comms
-    comms = PLC()   
-    comms.IPAddress = ip.get()
-    comms.ProcessorSlot = int(slot.get())
+    try:
+        #Setup comms
+        comms = PLC()   
+        comms.IPAddress = ip.get()
+        comms.ProcessorSlot = int(slot.get())
+        comms.SocketTimeout = 1
 
-    #Setup tags to read back data
-    tag_list = [cvtexttag.get(), sptexttag.get()]    
+        #Setup tags to read back data
+        tag_list = [cvtexttag.get(), sptexttag.get()]    
     
-    #Don't write data if empty, reads back data after write
-    if spsend.get(): 
-        sp = float(spsend.get())    
-        comms.Write(sptexttag.get(), sp)              
-        sptext.set(round(comms.Read(sptexttag.get()).Value,2)) 
-    if cvsend.get():
-        cv=float(cvsend.get())
-        comms.Write(cvtexttag.get(), cv)
-        cvtext.set(round(comms.Read(cvtexttag.get()).Value,2))
-    comms.Close()
+        #Don't write data if empty, reads back data after write
+        if spsend.get(): 
+            sp = float(spsend.get())    
+            comms.Write(sptexttag.get(), sp)              
+            sptext.set(round(comms.Read(sptexttag.get()).Value,2)) 
+        if cvsend.get():
+            cv=float(cvsend.get())
+            comms.Write(cvtexttag.get(), cv)
+            cvtext.set(round(comms.Read(cvtexttag.get()).Value,2))
+
+    except Exception as e:    
+        spstatus.set('Write Error: ' + str(e))  
+        cvstatus.set('Write Error: ' + str(e))  
+        
+    finally:
+        comms.Close()
 
 def TrendFileData():
     df = pd.read_csv(fname.get(), sep=';',quoting=csv.QUOTE_NONE, escapechar="\\", encoding="utf-8")
@@ -191,31 +220,36 @@ def LiveTrend():
 
     #Loop here
     def animate(i):     
-        x = np.arange(len(GData.pltSP),dtype=int)
+        x = np.arange(len(GData.SP),dtype=int)
         scale = int(60*1000/int(deltat.get())) #Convert mS to Minutes
         x=x/scale
         ax.set_xlim(0,max(x)*1.1)
-        SP.set_data(x,GData.pltSP)
-        CV.set_data(x,GData.pltCV)
-        PV.set_data(x,GData.pltPV)
+        SP.set_data(x,GData.SP)
+        CV.set_data(x,GData.CV)
+        PV.set_data(x,GData.PV)
         return SP,PV,CV,
 
     #Live Data
-    if GData.RunNow:
+    if GData.RunNowFlag:
         anim = animation.FuncAnimation(fig, animate, init_func=init, frames=100, interval=1000) #, blit=True) # cant use blit with dynamic x-axis
 
     plt.show()
-   
-def Start():      
-    spstatus.set("")
-    pvstatus.set("")
-    cvstatus.set("")
-    GData.RunNow=1 
-    GData.ErrCount=0
-    GData.ReadCount=0
 
-def Close():    
+def Stop():    
     GData.reset()
+    if 'loop_record' in globals():
+        loop_record.stop()
+    comm.Close()        
+    #Enable text box entry
+    sptexttag.configure(state="normal")
+    pvtexttag.configure(state="normal")
+    cvtexttag.configure(state="normal")
+    deltat.configure(state="normal")
+    ip.configure(state="normal")
+    slot.configure(state="normal")
+    fname.configure(state="normal")        
+    button_record.configure(bg = "#f0f0f0")
+    button_livetrend["state"] = "disabled"
     plt.close('all')
 
 #Gui
@@ -301,7 +335,7 @@ fname.insert(10,"D:\Trend.csv")
 
 #Buttons
 #Record Button Placement
-button_record = tk.Button(root, text="Record Data", command=lambda :[Start(),Record()])
+button_record = tk.Button(root, text="Record Data", command=lambda :[thread_record()])
 button_record.grid(row=4,column=0,columnspan=2,padx=10 ,pady=2,sticky="NESW")
 
 #Write Button Placement
@@ -313,9 +347,9 @@ button_livetrend = tk.Button(root, text="Live Plot", command=lambda :[LiveTrend(
 button_livetrend.grid(row=5,column=3,columnspan=1,padx=10 ,pady=2,sticky="NESW")
 button_livetrend["state"] = "disabled"
 
-#Close Trends Button Placement
-button_close = tk.Button(root, text="Stop Recording", command=lambda :[Close()])
-button_close.grid(row=5,column=0,columnspan=3,padx=10 ,pady=2,sticky="NESW")
+#Stop Trends Button Placement
+button_stop = tk.Button(root, text="Stop Recording", command=lambda :[Stop()])
+button_stop.grid(row=5,column=0,columnspan=3,padx=10 ,pady=2,sticky="NESW")
 
 #Trend Button Placement
 button_TrendFileData = tk.Button(root, text="Plot Data From CSV", command=lambda :[TrendFileData()])
