@@ -78,6 +78,7 @@ def Record():
         GData.RunNowFlag=True
 
     current_date_time = datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S.%f')
+    button_record["state"] = "disabled"
 
     try:
         #Setup tags to read
@@ -235,11 +236,10 @@ def LiveTrend():
 
     plt.show()
 
-def Stop():    
-    GData.reset()
+def Stop():        
     if 'loop_record' in globals():
-        loop_record.stop()
-    comm.Close()        
+        loop_record.stop()          
+    GData.reset()
     #Enable text box entry
     sptexttag.configure(state="normal")
     pvtexttag.configure(state="normal")
@@ -250,6 +250,8 @@ def Stop():
     fname.configure(state="normal")        
     button_record.configure(bg = "#f0f0f0")
     button_livetrend["state"] = "disabled"
+    button_record["state"] = "normal"
+    comm.Close()  
     plt.close('all')
 
 #Gui
@@ -335,7 +337,7 @@ fname.insert(10,"D:\Trend.csv")
 
 #Buttons
 #Record Button Placement
-button_record = tk.Button(root, text="Record Data", command=lambda :[thread_record()])
+button_record = tk.Button(root, text="Record Data",disabledforeground="white", command=lambda :[thread_record()])
 button_record.grid(row=4,column=0,columnspan=2,padx=10 ,pady=2,sticky="NESW")
 
 #Write Button Placement
