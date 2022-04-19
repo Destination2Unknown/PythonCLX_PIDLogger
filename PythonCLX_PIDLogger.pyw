@@ -68,7 +68,7 @@ def Record():
         #Setup communnication object       
         comm.IPAddress = ip.get()
         comm.ProcessorSlot = int(slot.get())
-        comm.SocketTimeout = int(deltat.get())/1000                     
+        comm.SocketTimeout = sorted([100, int(deltat.get())/1000, 5000])[1]
         spstatus.set("")
         pvstatus.set("")
         cvstatus.set("")        
@@ -76,9 +76,10 @@ def Record():
         GData.ReadCount=0
         GData.SetupFlag=True 
         GData.RunNowFlag=True
+        button_record.configure(bg = "Black")
+        button_record["state"] = "disabled"
 
-    current_date_time = datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S.%f')
-    button_record["state"] = "disabled"
+    current_date_time = datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S.%f')    
 
     try:
         #Setup tags to read
@@ -128,7 +129,7 @@ def Record():
             slot.configure(state="disabled")
             fname.configure(state="disabled")
             button_record.configure(bg = "Green")
-            button_livetrend["state"] = "normal"
+            button_livetrend["state"] = "normal"            
 
         #Write new data to csv if read was successful, if not write last value, Open File or create if it doesn't exist
         with open(fname.get(), 'a') as csv_file:
