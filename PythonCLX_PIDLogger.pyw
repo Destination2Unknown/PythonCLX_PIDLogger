@@ -58,7 +58,9 @@ class data(object):
         self.ReadCount=0
         self.SetupFlag=False
         self.RunNowFlag=False
-       
+        self.CSVFile=object
+        self.CSVFileWriter=object
+               
 def thread_record():
     global loop_record
     loop_record = PeriodicInterval(Record, int(deltat.get())/1000)
@@ -78,6 +80,18 @@ def Record():
         GData.RunNowFlag=True
         button_record.configure(bg = "Black")
         button_record["state"] = "disabled"
+        try:
+            #Write new data to csv if read was successful, if not write last value, Open File or create if it doesn't exist
+            GData.CSVFile = open(fname.get(), 'a')
+            GData.CSVFileWriter = csv.writer(GData.CSVFile, delimiter=';', lineterminator='\n', quotechar='/', quoting=csv.QUOTE_MINIMAL)
+            #Write headers if its a new file
+            if os.stat(fname.get()).st_size == 0:
+                GData.CSVFileWriter.writerow(('PV','CV','SP','TimeStamp'))
+
+        except Exception as e:    
+            spstatus.set('File Error: ' + str(e))  
+            cvstatus.set('File Error: ' + str(e))  
+            pvstatus.set('File Error: ' + str(e)) 
 
     current_date_time = datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S.%f')    
 
@@ -131,17 +145,11 @@ def Record():
             button_record.configure(bg = "Green")
             button_livetrend["state"] = "normal"            
 
-        #Write new data to csv if read was successful, if not write last value, Open File or create if it doesn't exist
-        with open(fname.get(), 'a') as csv_file:
-            csv_file = csv.writer(csv_file, delimiter=';', lineterminator='\n', quotechar='/', quoting=csv.QUOTE_MINIMAL)
-            #Write headers if its a new file
-            if os.stat(fname.get()).st_size == 0:
-                csv_file.writerow((ret[0].TagName,ret[1].TagName,ret[2].TagName,'TimeStamp'))
-            #Write all values to csv file  
-            row = [actualpv,actualcv,actualsp]
-            GData.update(actualpv,actualcv,actualsp)            
-            row.append(current_date_time)
-            csv_file.writerow(row)
+        #Write all values to csv file  
+        row = [actualpv,actualcv,actualsp]
+        GData.update(actualpv,actualcv,actualsp)            
+        row.append(current_date_time)
+        GData.CSVFileWriter.writerow(row)
 
         #If read fails update error counter, if successful increment read counter
         if ret[0].Status=='Success' or ret[1].Status=='Success' or ret[2].Status=='Success':
@@ -187,19 +195,26 @@ def Write():
         comms.Close()
 
 def TrendFileData():
-    df = pd.read_csv(fname.get(), sep=';',quoting=csv.QUOTE_NONE, escapechar="\\", encoding="utf-8")
-    headers=list(df)
-    df['TimeStamp'] = pd.to_datetime(df['TimeStamp'],format='%d-%m-%Y %H:%M:%S.%f')
-    plt.figure()
-    plt.plot(df['TimeStamp'],df[headers[0]], color="#1f77b4", linewidth=2, label=headers[0])
-    plt.plot(df['TimeStamp'],df[headers[1]], color="#ff7f0e",linewidth=2,label=headers[1])
-    plt.plot(df['TimeStamp'],df[headers[2]], color="#2ca02c",linewidth=2,label=headers[2])
-    plt.ylabel('EU')                   
-    plt.xlabel("Time")
-    plt.title(fname.get())
-    plt.legend(loc='best')
-    plt.gcf().autofmt_xdate()
-    plt.show()
+    try:
+        if GData.RunNowFlag:
+            GData.CSVFile.flush()        
+        df = pd.read_csv(fname.get(), sep=';',quoting=csv.QUOTE_NONE, escapechar="\\", encoding="utf-8")
+        headers=list(df)
+        df['TimeStamp'] = pd.to_datetime(df['TimeStamp'],format='%d-%m-%Y %H:%M:%S.%f')
+        plt.figure()
+        plt.plot(df['TimeStamp'],df[headers[0]], color="#1f77b4", linewidth=2, label=headers[0])
+        plt.plot(df['TimeStamp'],df[headers[1]], color="#ff7f0e",linewidth=2,label=headers[1])
+        plt.plot(df['TimeStamp'],df[headers[2]], color="#2ca02c",linewidth=2,label=headers[2])
+        plt.ylabel('EU')                   
+        plt.xlabel("Time")
+        plt.title(fname.get())
+        plt.legend(loc='best')
+        plt.gcf().autofmt_xdate()
+        plt.show()
+    
+    except Exception as e:    
+        pvstatus.set('CSV Read Error: ' + str(e))  
+
  
 def LiveTrend(): 
     #Set up the figure
@@ -240,7 +255,6 @@ def LiveTrend():
 def Stop():        
     if 'loop_record' in globals():
         loop_record.stop()          
-    GData.reset()
     #Enable text box entry
     sptexttag.configure(state="normal")
     pvtexttag.configure(state="normal")
@@ -253,6 +267,9 @@ def Stop():
     button_livetrend["state"] = "disabled"
     button_record["state"] = "normal"
     comm.Close()  
+    if not GData.CSVFile.closed:
+        GData.CSVFile.close()
+    GData.reset()
     plt.close('all')
 
 #Gui
