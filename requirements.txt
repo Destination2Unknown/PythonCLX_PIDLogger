@@ -1,4 +1,5 @@
-matplotlib
-numpy
-pylogix
 pandas
+numpy
+matplotlib
+customtkinter
+pylogix
